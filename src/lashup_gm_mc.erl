@@ -28,7 +28,8 @@
 -type payload() :: term().
 -type multicast_packet() :: map().
 
--define(DEFAULT_TTL, 20).
+% -define(DEFAULT_TTL, 20).
+-define(DEFAULT_TTL, 0).
 
 -spec(multicast(Topic :: topic(), Payload :: payload()) -> ok).
 multicast(Topic, Payload) ->
@@ -76,19 +77,21 @@ init([]) ->
 handle_call(_Request, _From, State) ->
   {reply, ok, State}.
 
-handle_cast(#{type := multicast_packet} = MulticastPacket, State) ->
+handle_cast({broadcast, #{type := multicast_packet} = MulticastPacket}, State) ->
   handle_multicast_packet(MulticastPacket),
   {noreply, State};
 handle_cast({do_multicast, Topic, Payload}, State) ->
   handle_do_original_multicast(Topic, Payload),
   {noreply, State};
-handle_cast(_Request, State) ->
+handle_cast(Request, State) ->
+  lager:info("[cmeik] unhandled cast: ~p", [Request]),
   {noreply, State}.
 
-handle_info(#{type := multicast_packet} = MulticastPacket, State) ->
+handle_info({broadcast, #{type := multicast_packet} = MulticastPacket}, State) ->
   handle_multicast_packet(MulticastPacket),
   {noreply, State};
-handle_info(_Info, State) ->
+handle_info(Info, State) ->
+  lager:info("[cmeik] unhandled info: ~p", [Info]),
   {noreply, State}.
 
 terminate(_Reason, _State) ->
@@ -121,13 +124,17 @@ handle_do_original_multicast(Topic, Payload) ->
 
 -spec(original_multicast(topic(), payload()) -> ok).
 original_multicast(Topic, Payload) ->
+  lager:info("[cmeik] original multicast at node: ~p for payload: ~p", [node(), Payload]),
   Packet = new_multicast_packet(Topic, Payload),
   ActiveView = lashup_hyparview_membership:get_active_view(),
+  lager:info("[cmeik] original multicast at node: ~p active_view: ~p", [node(), ActiveView]),
   Fanout = lashup_config:max_mc_replication(),
   ActiveViewTruncated = determine_fakeroots(ActiveView, Fanout - 1),
   Nodes = [node() | ActiveViewTruncated],
-  %% TODO: Try to make the trees intersect as little as possible
-  lists:foreach(fun (Node) -> do_original_cast(Node, Packet) end, Nodes).
+  lager:info("[cmeik] original multicast at node: ~p node: ~p", [node(), Nodes]),
+  % %% TODO: Try to make the trees intersect as little as possible
+  % lists:foreach(fun (Node) -> do_original_cast(Node, Packet) end, Nodes).
+  do_original_cast(node(), Packet).
 
 %% @doc
 %% determine the fakeroots
@@ -166,7 +173,8 @@ do_original_cast(Node, Packet) ->
       _ ->
         Packet0
     end,
-  bsend(Packet1, [Node]).
+  % bsend(Packet1, [Node]).
+  bsend(Packet1).
 
 -spec(handle_multicast_packet(multicast_packet()) -> ok).
 handle_multicast_packet(MulticastPacket) ->
@@ -174,7 +182,7 @@ handle_multicast_packet(MulticastPacket) ->
   prometheus_counter:inc(lashup, mc_receive_messages_total, [], 1),
   prometheus_counter:inc(lashup, mc_receive_bytes_total, [], Size),
   % 1. Process the packet, and forward it on
-  maybe_forward_packet(MulticastPacket),
+  % maybe_forward_packet(MulticastPacket),
   % 2. Fan it out to lashup_gm_mc_events
   maybe_ingest(MulticastPacket).
 
@@ -184,45 +192,58 @@ maybe_ingest(#{origin := Origin}) when Origin == node() ->
 maybe_ingest(MulticastPacket) ->
   lashup_gm_mc_events:ingest(MulticastPacket).
 
--spec(maybe_forward_packet(multicast_packet()) -> ok).
-maybe_forward_packet(_MulticastPacket = #{ttl := 0}) ->
-  lager:warning("TTL Exceeded on Multicast Packet"),
-  ok;
-maybe_forward_packet(MulticastPacket0 = #{tree := Tree, ttl := TTL}) ->
-  MulticastPacket1 = MulticastPacket0#{ttl := TTL - 1},
-  forward_packet(MulticastPacket1, Tree);
-maybe_forward_packet(MulticastPacket0 = #{fakeroot := FakeRoot, ttl := TTL, origin := Origin}) ->
-  case lashup_gm_route:get_tree(FakeRoot) of
-    {tree, Tree} ->
-      MulticastPacket1 = MulticastPacket0#{ttl := TTL - 1},
-      forward_packet(MulticastPacket1, Tree);
-    false ->
-      lager:warning("Dropping multicast packet due to unknown root: ~p", [Origin]),
-      ok
-  end.
+% -spec(maybe_forward_packet(multicast_packet()) -> ok).
+% maybe_forward_packet(_MulticastPacket = #{ttl := 0}) ->
+%   lager:warning("TTL Exceeded on Multicast Packet"),
+%   ok;
+% maybe_forward_packet(MulticastPacket0 = #{tree := Tree, ttl := TTL}) ->
+%   MulticastPacket1 = MulticastPacket0#{ttl := TTL - 1},
+%   forward_packet(MulticastPacket1, Tree);
+% maybe_forward_packet(MulticastPacket0 = #{fakeroot := FakeRoot, ttl := TTL, origin := Origin}) ->
+%   case lashup_gm_route:get_tree(FakeRoot) of
+%     {tree, Tree} ->
+%       MulticastPacket1 = MulticastPacket0#{ttl := TTL - 1},
+%       forward_packet(MulticastPacket1, Tree);
+%     false ->
+%       lager:warning("Dropping multicast packet due to unknown root: ~p", [Origin]),
+%       ok
+%   end.
 
--spec(forward_packet(multicast_packet(), lashup_gm_route:tree()) -> ok).
-forward_packet(MulticastPacket, Tree) ->
-  %% TODO: Only abcast to connected nodes
-  Children = lashup_gm_route:children(node(), Tree),
-  bsend(MulticastPacket, Children).
+% -spec(forward_packet(multicast_packet(), lashup_gm_route:tree()) -> ok).
+% forward_packet(MulticastPacket, Tree) ->
+%   %% TODO: Only abcast to connected nodes
+%   Children = lashup_gm_route:children(node(), Tree),
+%   bsend(MulticastPacket, Children).
 
-bsend(MulticastPacket, Children) ->
-  lists:foreach(fun (Child) ->
-    Begin = erlang:monotonic_time(),
-    try erlang:send({?MODULE, Child}, MulticastPacket, [noconnect]) of
-      noconnect ->
-        lager:warning("Dropping packet due to stale tree");
-      _Result ->
-        prometheus_counter:inc(
-          lashup, mc_send_bytes_total, [],
-          erlang:external_size(MulticastPacket))
-    after
-      prometheus_summary:observe(
-        lashup, mc_send_packets_seconds, [],
-        erlang:monotonic_time() - Begin)
-    end
-  end, Children).
+bsend(MulticastPacket) ->
+  lager:info("[cmeik] bsend invoked!", []),
+  {ok, Membership} = partisan_peer_service:members(),
+  lists:foreach(fun(N) ->
+    lager:info("[cmeik] sending from node: ~p to module ~p node ~p", [node(), ?MODULE, N]),
+    partisan_pluggable_peer_service_manager:forward_message(N, undefined, ?MODULE, {broadcast, MulticastPacket}, [])
+  end, lists:usort(Membership)),
+  ok.
+
+% bsend(MulticastPacket, Children) ->
+%   lists:foreach(fun (Child) ->
+%     lager:info("[cmeik] sending from node: ~p to module ~p child ~p", [node(), ?MODULE, Child]),
+%     partisan_pluggable_peer_service_manager:forward_message(Child, undefined, ?MODULE, {broadcast, MulticastPacket}, []),
+%     Begin = erlang:monotonic_time(),
+%     try erlang:send({?MODULE, Child}, MulticastPacket, [noconnect]) of
+%       noconnect ->
+%         lager:warning("Dropping packet due to stale tree");
+%       _Result ->
+%         prometheus_counter:inc(
+%           lashup, mc_send_bytes_total, [],
+%           erlang:external_size(MulticastPacket))
+%     after
+%       prometheus_summary:observe(
+%         lashup, mc_send_packets_seconds, [],
+%         erlang:monotonic_time() - Begin)
+%     end
+%   end, Children),
+
+%   ok.
 
 %%%===================================================================
 %%% Metrics functions

@@ -388,6 +388,7 @@ check_map(NewKV = #kv2{key = Key}) ->
 
 -spec (propagate(kv()) -> ok).
 propagate(_KV = #kv2{key = Key, map = Map, vclock = VClock}) ->
+  lager:info("[cmeik] about to propagate write for key: ~p from node; ~p", [Key, node()]),
   Payload = #{type => full_update, reason => op, key => Key, map => Map, vclock => VClock},
   lashup_gm_mc:multicast(?KV_TOPIC, Payload),
   ok.

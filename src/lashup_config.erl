@@ -86,7 +86,8 @@ join_timeout() ->
 %%
 -spec(contact_nodes() -> ordsets:ordset(node())).
 contact_nodes() ->
-  Nodes = ordsets:from_list(get_env(contact_nodes, [])),
+  % Nodes = ordsets:from_list(get_env(contact_nodes, [])),
+  Nodes = ordsets:from_list(nodes()),
   ordsets:del_element(node(), Nodes).
 
 %% We handle reactive changes a little bit differently than the paper.
