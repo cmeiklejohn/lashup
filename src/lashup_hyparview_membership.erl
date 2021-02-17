@@ -111,7 +111,7 @@ init([]) ->
   FixedSeed = lashup_utils:seed(),
   MyPid = self(),
   spawn_link(fun() -> shuffle_backoff_loop(5000, MyPid) end),
-  reschedule_join(5100),
+  reschedule_join(100),
   %% Schedule the maybe_neighbor
   reschedule_maybe_neighbor(30000),
   Window = lashup_utils:new_window(1000),
@@ -354,32 +354,33 @@ trim_ordset_to(Ordset, _Size, DroppedItems) ->
   {Ordset, DroppedItems}.
 
 -spec(handle_join(Node :: node(), State :: state(), Ref :: reference()) -> state()).
-handle_join(Node, State = #state{join_window = JoinWindow, active_view = ActiveView, active_view_size = AVS}, Ref)
+handle_join(Node, State = #state{join_window = _JoinWindow, active_view = _ActiveView, active_view_size = _AVS}, Ref)
   when Node =/= node() ->
-  lager:debug("Saw join from ~p", [Node]),
-  State1 =
-  case lashup_utils:count_ticks(JoinWindow) of
-    %% Limit it to 25 joins/sec if the active view is full
-    Num when length(ActiveView) == AVS andalso Num < 25 ->
-      really_handle_join(Node, State, Ref);
-    %% If the active view is less than that, throttle to 1 / sec
-    Num when Num < 1 ->
-      really_handle_join(Node, State, Ref);
-    %% Else, drop it
-    WindowSize ->
-      lager:warning("Throttling joins, window size: ~p, active view size: ~p", [WindowSize, length(ActiveView)]),
-      deny_join(State, Node, Ref),
-      State
-  end,
+  lager:info("Saw join from ~p", [Node]),
+  % State1 =
+  % case lashup_utils:count_ticks(JoinWindow) of
+  %   %% Limit it to 25 joins/sec if the active view is full
+  %   Num when length(ActiveView) == AVS andalso Num < 200 ->
+  %     really_handle_join(Node, State, Ref);
+  %   %% If the active view is less than that, throttle to 1 / sec
+  %   Num when Num < 1 ->
+  %     really_handle_join(Node, State, Ref);
+  %   %% Else, drop it
+  %   WindowSize ->
+  %     lager:warning("Throttling joins, window size: ~p, active view size: ~p", [WindowSize, length(ActiveView)]),
+  %     deny_join(State, Node, Ref),
+  %     State
+  % end,
+  State1 = really_handle_join(Node, State, Ref),
   push_state(State1),
   State1;
 
 handle_join(_, State, _) -> State.
 
--spec(deny_join(State :: state(), Node :: node(), Ref :: reference()) -> ok).
-deny_join(_State = #state{active_view = ActiveView}, Node, Ref) ->
-  Reply = #{message => join_deny, sender => node(), ref => Ref, active_view => ActiveView},
-  cast(Node, Reply).
+% -spec(deny_join(state :: state(), node :: node(), ref :: reference()) -> ok).
+% deny_join(_state = #state{active_view = activeview}, node, ref) ->
+%   reply = #{message => join_deny, sender => node(), ref => ref, active_view => activeview},
+%   cast(node, reply).
 
 -spec(really_handle_join(Node :: node(), State :: state(), Ref :: reference()) -> state()).
 really_handle_join(Node, State = #state{join_window = JoinWindow}, Ref) ->

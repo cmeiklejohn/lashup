@@ -269,7 +269,7 @@ init_db() ->
 -spec(init_db([node()]) -> ok).
 init_db(Nodes) ->
   mnesia:create_schema(Nodes),
-  mnesia:change_table_copy_type (schema, node(), disc_copies), % If the node was already running
+  mnesia:change_table_copy_type (schema, node(), ram_copies), % If the node was already running
   {ok, _} = application:ensure_all_started(mnesia),
   ExistingTables = mnesia:system_info(tables),
   Tables = [?KV_TABLE, nclock],
@@ -290,7 +290,7 @@ init_db(Nodes) ->
 create_table(Table) ->
   {atomic, ok} =  mnesia:create_table(Table, [
     {attributes, get_record_info(Table)},
-    {disc_copies, [node()]},
+    {ram_copies, [node()]},
     {type, set}
   ]).
 
@@ -388,6 +388,7 @@ check_map(NewKV = #kv2{key = Key}) ->
 
 -spec (propagate(kv()) -> ok).
 propagate(_KV = #kv2{key = Key, map = Map, vclock = VClock}) ->
+  lager:info("[cmeik] about to propagate write for key: ~p from node; ~p", [Key, node()]),
   Payload = #{type => full_update, reason => op, key => Key, map => Map, vclock => VClock},
   lashup_gm_mc:multicast(?KV_TOPIC, Payload),
   ok.

@@ -66,6 +66,7 @@ tx_sync(info, #{from := RemotePID, message := rx_sync_complete},
     end;
 
 tx_sync(internal, start_sync, StateData = #state{maxclock = MaxClock}) ->
+    lager:info("start_sync", []),
     LClock = MaxClock,
     NextKey = maybe_fetch_next_key(lashup_kv:first_key(), LClock),
     defer_sync_key(NextKey),

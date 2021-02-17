@@ -86,7 +86,8 @@ join_timeout() ->
 %%
 -spec(contact_nodes() -> ordsets:ordset(node())).
 contact_nodes() ->
-  Nodes = ordsets:from_list(get_env(contact_nodes, [])),
+  % Nodes = ordsets:from_list(get_env(contact_nodes, [])),
+  Nodes = ordsets:from_list(nodes()),
   ordsets:del_element(node(), Nodes).
 
 %% We handle reactive changes a little bit differently than the paper.
@@ -123,7 +124,8 @@ max_mc_replication() ->
 %% @doc
 %% How often we message our Vector Clocks for AAE in milliseconds
 aae_interval() ->
-  get_env(aae_interval, 60000).
+  % get_env(aae_interval, 60000).
+  get_env(aae_interval, 10000).
 
 %% @doc
 %% Lashup working directory
